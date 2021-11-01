@@ -1690,6 +1690,26 @@
       }
     },
     {
+      "name": "sprintf",
+      "decl": {
+        "args": [
+          {
+            "type": "string"
+          },
+          {
+            "dynamic": {
+            "type": "any"
+            },
+            "type": "array"
+          }
+        ],
+        "result": {
+          "type": "string"
+        },
+        "type": "function"
+      }
+	  },
+    {
       "name": "startswith",
       "decl": {
         "args": [
