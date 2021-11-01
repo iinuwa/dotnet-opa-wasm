@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Text.Json;
 using Wasmtime;
 
@@ -16,6 +17,8 @@ namespace Opa.Wasm
 		private Store _store;
 		private Memory _envMemory;
 		private Instance _instance;
+
+		private Dictionary<int, string> _builtinsMap;
 
 		public IReadOnlyDictionary<string, int> Entrypoints { get; private set; }
 
@@ -96,42 +99,72 @@ namespace Opa.Wasm
 			_linker.Define(OpaConstants.Module, OpaConstants.Builtin0, Function.FromCallback(_store,
 				(Caller caller, int builtinId, int opaCtxReserved) =>
 				{
-					Debugger.Break();
-					return 0;
+					return CallBuiltin(builtinId);
 				})
 			);
 
 			_linker.Define(OpaConstants.Module, OpaConstants.Builtin1, Function.FromCallback(_store,
 				(Caller caller, int builtinId, int opaCtxReserved, int addr1) =>
 				{
-					Debugger.Break();
-					return 0;
+					return CallBuiltin(builtinId, addr1);
 				})
 			);
 
 			_linker.Define(OpaConstants.Module, OpaConstants.Builtin2, Function.FromCallback(_store,
 				(Caller caller, int builtinId, int opaCtxReserved, int addr1, int addr2) =>
 				{
-					Debugger.Break();
-					return 0;
+					return CallBuiltin(builtinId, addr1, addr2);
 				})
 			);
 
 			_linker.Define(OpaConstants.Module, OpaConstants.Builtin3, Function.FromCallback(_store,
 				(Caller caller, int builtinId, int opaCtxReserved, int addr1, int addr2, int addr3) =>
 				{
-					Debugger.Break();
-					return 0;
+					return CallBuiltin(builtinId, addr1, addr2, addr3);
 				})
 			);
 
 			_linker.Define(OpaConstants.Module, OpaConstants.Builtin4, Function.FromCallback(_store,
 				(Caller caller, int builtinId, int opaCtxReserved, int addr1, int addr2, int addr3, int addr4) =>
 				{
-					Debugger.Break();
-					return 0;
+					return CallBuiltin(builtinId, addr1, addr2, addr3, addr4);
 				})
 			);
+		}
+
+		private int CallBuiltin(int builtinId, params int[] argAddrs)
+		{
+			string builtinName = _builtinsMap[builtinId];
+			var method = Builtins.Builtins.Lookup(builtinName);
+			var parameters = method.GetParameters();
+
+			if (parameters.Length > argAddrs.Length)
+			{
+				// TODO: Not sure how I'm supposed to signal an error to WASM.
+				throw new ArgumentException($"not enough parameters given: expected {parameters.Length}, received {argAddrs.Length}", nameof(argAddrs));
+			}
+
+			var arguments = new List<object>();
+			for (int i = 0; i < parameters.Length; i++)
+			{
+				var arg = DumpJson(argAddrs[i]);
+				var paramType = parameters[i].ParameterType;
+				try
+				{
+					var value = JsonSerializer.Deserialize(arg, paramType);
+					arguments.Add(value);
+				}
+				catch (Exception e)
+				{
+					// TODO: Not sure how I'm supposed to signal an error to WASM.
+					throw e;
+				}
+			}
+
+			var result = method.Invoke(null, arguments.ToArray());
+			var serialized = JsonSerializer.Serialize(result);
+			var addr = LoadJson(serialized);
+			return addr;
 		}
 
 		private void Initialize(Module module)
@@ -139,6 +172,9 @@ namespace Opa.Wasm
 			_instance = _linker.Instantiate(_store, module);
 
 			string builtins = DumpJson(Policy_Builtins());
+			var builtinsDoc = JsonDocument.Parse(builtins);
+
+			_builtinsMap = builtinsDoc.RootElement.EnumerateObject().ToDictionary(kv => kv.Value.GetInt32(), kv => kv.Name);
 
 			_dataAddr = LoadJson("{}");
 			_baseHeapPtr = Policy_opa_heap_ptr_get();
